@@ -52,13 +52,13 @@ class ResBlock(nn.Module):
         self.return_std = return_std
         self.softplus = nn.Softplus()
         if scale == "same":
-            bottleneck = nn.Conv2d(in_chan//2, in_chan//2, kernel_size=3, padding="same")
+            bottleneck = nn.Conv2d(in_chan, in_chan, kernel_size=3, padding="same")
             stride = 1
         elif scale == "downscale":
-            bottleneck = nn.Conv2d(in_chan//2, in_chan//2, kernel_size=3, stride=2, padding=1)
+            bottleneck = nn.Conv2d(in_chan, in_chan, kernel_size=3, stride=2, padding=1)
             stride = 2
         elif scale == "upscale":
-            bottleneck = nn.ConvTranspose2d(in_chan//2, in_chan//2, kernel_size=4, stride=2, padding=1)
+            bottleneck = nn.ConvTranspose2d(in_chan, in_chan, kernel_size=4, stride=2, padding=1)
             stride = 1
 
         # The residual block employs the bottleneck architecture as described
@@ -78,17 +78,17 @@ class ResBlock(nn.Module):
             # 1x1 convolution
             norm,#PositionalNorm(in_chan),
             act,#nn.SiLU(),
-            nn.Conv2d(in_chan, in_chan//2, kernel_size=1),
+            nn.Conv2d(in_chan, in_chan, kernel_size=3, padding="same"),#nn.Conv2d(in_chan, in_chan//2, kernel_size=1),
 
             # 3x3 convolution if same or downscale, 4x4 transposed convolution if upscale
-            PositionalNorm(in_chan//2),
+            PositionalNorm(in_chan),
             nn.SiLU(),
             bottleneck,
 
             # 1x1 convolution
-            PositionalNorm(in_chan//2),
+            PositionalNorm(in_chan),
             nn.SiLU(),
-            nn.Conv2d(in_chan//2, out_chan, kernel_size=1),
+            nn.Conv2d(in_chan, out_chan, kernel_size=3, padding="same")#nn.Conv2d(in_chan//2, out_chan, kernel_size=1),
         )
 
         # If channels or spatial dimensions are modified then transform the
@@ -114,7 +114,7 @@ class ResBlock(nn.Module):
                 PositionalNorm(in_chan),
                 nn.SiLU(),
                 nn.Conv2d(in_chan, out_chan, kernel_size=1),
-                nn.ConvTranspose2d(out_chan, out_chan, kernel_size=4, stride=2, padding=1)#nn.Upsample(scale_factor=2, mode="bilinear"),
+                nn.Upsample(scale_factor=2, mode="bilinear"),
             )
 
     def forward(self, x):
