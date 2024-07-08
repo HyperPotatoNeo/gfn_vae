@@ -13,10 +13,10 @@ class PositionalNorm(nn.LayerNorm):
         # The input is of shape (B, C, H, W). Transpose the input so that the
         # channels are pushed to the last dimension and then run the standard
         # LayerNorm layer.
-        #x = x.permute(0, 2, 3, 1).contiguous()
-        #out = super().forward(x)
-        #out = out.permute(0, 3, 1, 2).contiguous()
-        return x
+        x = x.permute(0, 2, 3, 1).contiguous()
+        out = super().forward(x)
+        out = out.permute(0, 3, 1, 2).contiguous()
+        return out
 
 
 class ResBlock(nn.Module):
@@ -34,7 +34,7 @@ class ResBlock(nn.Module):
     is also transformed into the desired shape for the addition operation.
     """
 
-    def __init__(self, in_chan, out_chan, scale="same", return_std=False):
+    def __init__(self, in_chan, out_chan, scale="same", return_std=False, start_activation=True):
         """Init a Residual block.
 
         Args:
@@ -68,20 +68,26 @@ class ResBlock(nn.Module):
         # convolutions. The first `1x1` reduces (in half) the number of channels
         # before the expensive `3x3` (`4x4`) convolution. The second `1x1`
         # up-scales the channels to the requested output channel size.
+        if start_activation:
+            act = nn.SiLU()
+            norm = PositionalNorm(in_chan)
+        else:
+            act = nn.Identity()
+            norm = nn.Identity()
         self.block = nn.Sequential(
             # 1x1 convolution
-            PositionalNorm(in_chan),
-            nn.ReLU(),
+            norm,#PositionalNorm(in_chan),
+            act,#nn.SiLU(),
             nn.Conv2d(in_chan, in_chan//2, kernel_size=1),
 
             # 3x3 convolution if same or downscale, 4x4 transposed convolution if upscale
             PositionalNorm(in_chan//2),
-            nn.ReLU(),
+            nn.SiLU(),
             bottleneck,
 
             # 1x1 convolution
             PositionalNorm(in_chan//2),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Conv2d(in_chan//2, out_chan, kernel_size=1),
         )
 
@@ -92,13 +98,13 @@ class ResBlock(nn.Module):
             # We will downscale by applying a strided `1x1` convolution.
             self.id = nn.Sequential(
                 PositionalNorm(in_chan),
-                nn.ReLU(),
+                act,#nn.SiLU(),
                 nn.Conv2d(in_chan, out_chan, kernel_size=1, stride=stride),
             )
         elif (in_chan != out_chan or scale == "downscale") and return_std == True:
             self.id = nn.Sequential(
                 PositionalNorm(in_chan),
-                nn.ReLU(),
+                act,#nn.SiLU(),
                 nn.Conv2d(in_chan, out_chan//2, kernel_size=1, stride=stride),
             )
         if scale == "upscale":
@@ -106,9 +112,9 @@ class ResBlock(nn.Module):
             # Channels are again modified using a `1x1` convolution.
             self.id = nn.Sequential(
                 PositionalNorm(in_chan),
-                nn.ReLU(),
+                nn.SiLU(),
                 nn.Conv2d(in_chan, out_chan, kernel_size=1),
-                nn.Upsample(scale_factor=2, mode="nearest"),
+                nn.ConvTranspose2d(out_chan, out_chan, kernel_size=4, stride=2, padding=1)#nn.Upsample(scale_factor=2, mode="bilinear"),
             )
 
     def forward(self, x):
@@ -170,7 +176,7 @@ class Posterior(nn.Module):
             else:
                 input_channels = latent_channels
             z_block = nn.Sequential(
-                ResBlock(in_chan=input_channels, out_chan=128),
+                ResBlock(in_chan=input_channels, out_chan=128, start_activation=False),
                 ResBlock(in_chan=128, out_chan=128),
                 ResBlock(in_chan=128, out_chan=128),
                 ResBlock(in_chan=128, out_chan=2*latent_channels, return_std=True)
@@ -240,7 +246,7 @@ class Generator(nn.Module):
         # depth - 1 latent blocks because first latent is from Gaussian prior
         for i in range(depth-1):
             z_block = nn.Sequential(
-                ResBlock(in_chan=latent_channels, out_chan=128),
+                ResBlock(in_chan=latent_channels, out_chan=128, start_activation=False),
                 ResBlock(in_chan=128, out_chan=128),
                 ResBlock(in_chan=128, out_chan=128),
                 ResBlock(in_chan=128, out_chan=2*latent_channels, return_std=True)
@@ -251,7 +257,7 @@ class Generator(nn.Module):
             out_chan = 2*out_chan
         self.decoder = nn.Sequential(
             # Body.
-            ResBlock(in_chan=latent_channels, out_chan=128),   # 8x8
+            ResBlock(in_chan=latent_channels, out_chan=128, start_activation=False),   # 8x8
             ResBlock(in_chan=128, out_chan=128),
             ResBlock(in_chan=128, out_chan=128),
 
@@ -267,7 +273,7 @@ class Generator(nn.Module):
 
             # Inverse stem.
             PositionalNorm(32),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Conv2d(32, out_chan, kernel_size=3, padding="same"),
         )
 

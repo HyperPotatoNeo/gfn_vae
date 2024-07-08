@@ -62,7 +62,6 @@ for epoch in range(args.n_epochs):
         loss = -elbo
         opt.zero_grad()
         loss.backward()
-        print(i, loss.item())
         opt.step()
         elbo_epoch += elbo.item()
         recon_epoch += recon_term.item()
