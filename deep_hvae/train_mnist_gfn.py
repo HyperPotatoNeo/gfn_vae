@@ -11,8 +11,8 @@ from distutils.util import strtobool
 parser = argparse.ArgumentParser()
 parser.add_argument('--n_epochs', type=int, default=100000)
 parser.add_argument('--log_image_freq', type=int, default=5)
-parser.add_argument('--batch_size', type=int, default=64)
-parser.add_argument('--vargrad_batch_size', type=int, default=32)
+parser.add_argument('--batch_size', type=int, default=32)
+parser.add_argument('--vargrad_batch_size', type=int, default=16)
 parser.add_argument('--latent_channels', type=int, default=8)
 parser.add_argument('--depth', type=int, default=1)
 parser.add_argument('--lr', type=float, default=5e-4)
@@ -22,7 +22,7 @@ parser.add_argument("--wandb-project-name", type=str, default="advantage-diffusi
     help="the wandb's project name")
 parser.add_argument("--wandb-entity", type=str, default='swish',
     help="the entity (team) of wandb's project")
-parser.add_argument("--run-name", type=str, default="hvae-mnist")
+parser.add_argument("--run-name", type=str, default="hvae-gfn-mnist")
 args = parser.parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -66,7 +66,7 @@ for epoch in range(args.n_epochs):
         for _ in range(args.num_posterior_steps):
             x_repeat = torch.repeat_interleave(x, args.vargrad_batch_size, dim=0)
             q_dist_list, q_log_prob_list, p_dist_list, p_log_prob_list = vae(x_repeat, detach_z=True, no_grad_generator=True)
-            log_pf = sum([p_log_prob_list[k] for k in range(args.depth)])
+            log_pf = sum([p_log_prob_list[k] for k in range(args.depth+1)])
             log_pb = sum([q_log_prob_list[k] for k in range(args.depth)])
             log_Z = (log_pf - log_pb).view(-1, args.vargrad_batch_size).mean(1).repeat_interleave(args.vargrad_batch_size, dim=0).detach()
             tb_loss = ((log_pb + log_Z - log_pf)**2).mean()
@@ -75,6 +75,9 @@ for epoch in range(args.n_epochs):
             opt.step()
             tb_loss_epoch += tb_loss.item()
             logZ_epoch += log_Z.mean().item()
+    for i, (x, _) in enumerate(dataloader):
+        x = x.to(device)
+        x = torch.clamp(x, 0.0, 1.0)
         # Generator update    
         elbo, recon_term, kl_term, kl_list = vae.elbo(x, no_grad_posterior=True)
         loss = -elbo
@@ -124,4 +127,4 @@ for epoch in range(args.n_epochs):
         plt.close(fig1)
         plt.close(fig2)
     elif args.track:
-        wandb.log({"elbo": elbo_epoch, "kl": kl_epoch, "recon_prob": recon_epoch, "elbo_test": elbo_epoch_test, "kl_test": kl_epoch_test, "recon_test": recon_epoch_test})
+        wandb.log({"elbo": elbo_epoch, "kl": kl_epoch, "recon_prob": recon_epoch, "tb_loss": tb_loss_epoch, "log_Z_epoch": logZ_epoch, "elbo_test": elbo_epoch_test, "kl_test": kl_epoch_test, "recon_test": recon_epoch_test})
