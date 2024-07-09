@@ -370,7 +370,7 @@ class VAE(nn.Module):
         self.posterior = Posterior(in_chan=in_chan, latent_channels=latent_channels, depth=depth)
         self.generator = Generator(out_chan=out_chan, latent_channels=latent_channels, depth=depth, x_dist=x_dist)
 
-    def forward(self, x, detach_z=False, no_grad_posterior=False):
+    def forward(self, x, detach_z=False, no_grad_posterior=False, no_grad_generator=False):
         """
         Sample trajectory from posterior, and return dists and log probs of trajectory under Posterior and Generator
         """
@@ -379,14 +379,18 @@ class VAE(nn.Module):
                 z_list, q_dist_list, q_log_prob_list = self.posterior(x, detach_z=detach_z)
         else:
             z_list, q_dist_list, q_log_prob_list = self.posterior(x, detach_z=detach_z)
-        p_dist_list, p_log_prob_list = self.generator.traj_log_prob(x, z_list)
+        if no_grad_generator:
+            with torch.no_grad():
+                p_dist_list, p_log_prob_list = self.generator.traj_log_prob(x, z_list)
+        else:
+            p_dist_list, p_log_prob_list = self.generator.traj_log_prob(x, z_list)
         return q_dist_list, q_log_prob_list, p_dist_list, p_log_prob_list
     
-    def elbo(self, x, detach_z=False, no_grad_posterior=False):
+    def elbo(self, x, detach_z=False, no_grad_posterior=False, no_grad_generator=False):
         """
         Compute ELBO
         """
-        q_dist_list, _, p_dist_list, p_log_prob_list = self.forward(x, detach_z=detach_z, no_grad_posterior=no_grad_posterior)
+        q_dist_list, _, p_dist_list, p_log_prob_list = self.forward(x, detach_z=detach_z, no_grad_posterior=no_grad_posterior, no_grad_generator=no_grad_generator)
         kl_list = [KL(q_dist_list[i], p_dist_list[i]).sum()/x.size(0) for i in range(self.depth)]
         kl_term = sum(kl_list)
         recon_term = p_log_prob_list[-1].mean()
