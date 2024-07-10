@@ -183,7 +183,7 @@ class Posterior(nn.Module):
             )
             self.latent_blocks.append(z_block)
 
-    def forward(self, x, detach_z=False):
+    def forward(self, x, detach_z=False, explore_sigma_scale = 1.0):
         """Forward the input through the encoder and return the parameters `mu`
         and `std` of the Normal distribution.
         """
@@ -194,11 +194,11 @@ class Posterior(nn.Module):
         for i in range(self.depth):
             z_params = self.latent_blocks[i](z)
             z_mu, z_std = torch.chunk(z_params, chunks=2, dim=1)
-            z_dist = torch.distributions.Normal(z_mu, z_std)
+            z_dist = torch.distributions.Normal(z_mu, z_std + 1e-8)
             if detach_z:
-                z = z_dist.sample()
+                z = (z_mu + (explore_sigma_scale * z_std) * torch.randn_like(z_mu)).detach()#z = z_dist.sample()
             else:
-                z = z_dist.rsample()
+                z = (z_mu + (explore_sigma_scale * z_std) * torch.randn_like(z_mu))#z_dist.rsample()
             log_prob = z_dist.log_prob(z).sum(dim=(1,2,3))
             log_prob_list.append(log_prob)
             z_list.append(z)
@@ -214,7 +214,7 @@ class Posterior(nn.Module):
         for i in range(self.depth):
             z_params = self.latent_blocks[i](z)
             z_mu, z_std = torch.chunk(z_params, chunks=2, dim=1)
-            z_dist = torch.distributions.Normal(z_mu, z_std)
+            z_dist = torch.distributions.Normal(z_mu, z_std + 1e-8)
             z = z_list[i]
             z_dist_list.append(z_dist)
             log_prob = z_dist.log_prob(z).sum(dim=(1,2,3))
@@ -295,7 +295,7 @@ class Generator(nn.Module):
         for i in range(self.depth-1):
             z_params = self.latent_blocks[i](z)
             z_mu, z_std = torch.chunk(z_params, chunks=2, dim=1)
-            z_dist = torch.distributions.Normal(z_mu, z_std)
+            z_dist = torch.distributions.Normal(z_mu, z_std + 1e-8)
             z = z_dist.sample()
             log_prob = z_dist.log_prob(z).sum(dim=(1,2,3))
             log_prob_list.append(log_prob)
@@ -305,7 +305,7 @@ class Generator(nn.Module):
         x_params = self.decoder(z)
         if self.x_dist == 'gaussian':
             x_mu, x_std = torch.chunk(x_params, chunks=2, dim=1)
-            x_dist = torch.distributions.Normal(x_mu, torch.exp(0.5*x_std)) #self.softplus(x_std))
+            x_dist = torch.distributions.Normal(x_mu, torch.exp(0.5*x_std) + 1e-8) #self.softplus(x_std))
         elif self.x_dist == 'bernoulli':
             x_dist = torch.distributions.Bernoulli(logits=x_params)
         x_sample = x_dist.sample()
@@ -328,14 +328,14 @@ class Generator(nn.Module):
         for i in range(self.depth-1):
             z_params = self.latent_blocks[i](z_list[i])
             z_mu, z_std = torch.chunk(z_params, chunks=2, dim=1)
-            z_dist = torch.distributions.Normal(z_mu, z_std)
+            z_dist = torch.distributions.Normal(z_mu, z_std + 1e-8)
             log_prob = z_dist.log_prob(z_list[i+1]).sum(dim=(1,2,3))
             z_dist_list.append(z_dist)
             log_prob_list.append(log_prob)
             
         if self.x_dist == 'gaussian':
             x_mu, x_std = torch.chunk(self.decoder(z_list[-1]), chunks=2, dim=1)
-            x_dist = torch.distributions.Normal(x_mu, torch.exp(0.5*x_std)) #self.softplus(x_std))
+            x_dist = torch.distributions.Normal(x_mu, torch.exp(0.5*x_std) + 1e-8) #self.softplus(x_std))
             log_prob = x_dist.log_prob(x).sum(dim=(1,2,3))
         elif self.x_dist == 'bernoulli':
             x_dist = torch.distributions.Bernoulli(logits=self.decoder(z_list[-1]))
@@ -370,15 +370,15 @@ class VAE(nn.Module):
         self.posterior = Posterior(in_chan=in_chan, latent_channels=latent_channels, depth=depth)
         self.generator = Generator(out_chan=out_chan, latent_channels=latent_channels, depth=depth, x_dist=x_dist)
 
-    def forward(self, x, detach_z=False, no_grad_posterior=False, no_grad_generator=False):
+    def forward(self, x, detach_z=False, no_grad_posterior=False, no_grad_generator=False, explore_sigma_scale = 1.0):
         """
         Sample trajectory from posterior, and return dists and log probs of trajectory under Posterior and Generator
         """
         if no_grad_posterior:
             with torch.no_grad():
-                z_list, q_dist_list, q_log_prob_list = self.posterior(x, detach_z=detach_z)
+                z_list, q_dist_list, q_log_prob_list = self.posterior(x, detach_z=detach_z, explore_sigma_scale = 1.0)
         else:
-            z_list, q_dist_list, q_log_prob_list = self.posterior(x, detach_z=detach_z)
+            z_list, q_dist_list, q_log_prob_list = self.posterior(x, detach_z=detach_z, explore_sigma_scale = 1.0)
         if no_grad_generator:
             with torch.no_grad():
                 p_dist_list, p_log_prob_list = self.generator.traj_log_prob(x, z_list)
